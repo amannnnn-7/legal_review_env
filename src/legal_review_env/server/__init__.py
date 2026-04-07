@@ -1,0 +1,1 @@
+"""Server package for the legal_review_env OpenEnv application."""
