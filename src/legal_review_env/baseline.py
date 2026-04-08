@@ -3,13 +3,11 @@ from __future__ import annotations
 import argparse
 import json
 import os
-import re
+import urllib.request
 from dataclasses import dataclass
 from typing import Protocol
 
-import httpx
-from openai import OpenAI
-
+from .agent_policy import build_client, choose_action
 from .client import LegalReviewEnvClient
 from .models import (
     BaselineRequest,
@@ -21,16 +19,7 @@ from .models import (
     LegalReviewState,
     TaskDifficulty,
 )
-from .scoring import rewrite_non_compete_block
 from .server.environment import LegalReviewEnvironment
-
-
-SYSTEM_PROMPT = """You are a careful junior lawyer agent.
-Operate only through the provided action schema.
-Return exactly one JSON object matching LegalReviewAction.
-Never invent text spans. Only use exact text already returned by the environment.
-When the task is complete, set metadata.finish to true on your final action.
-"""
 
 
 @dataclass
@@ -80,14 +69,12 @@ class _RemoteAdapter:
     def __init__(self, base_url: str):
         self._base_url = base_url.rstrip("/")
         self._client = LegalReviewEnvClient(base_url=base_url).sync()
-        self._http = httpx.Client(base_url=self._base_url, timeout=60.0)
 
     def __enter__(self) -> _RemoteAdapter:
         self._client.__enter__()
         return self
 
     def __exit__(self, exc_type, exc, tb) -> None:
-        self._http.close()
         self._client.__exit__(exc_type, exc, tb)
 
     def reset(self, **kwargs: object) -> _RunnerStep:
@@ -102,113 +89,20 @@ class _RemoteAdapter:
         return self._client.state()
 
     def grade(self) -> GraderResponse:
-        response = self._http.post("/grader", json={"include_details": True})
-        response.raise_for_status()
-        return GraderResponse.model_validate(response.json())
-
-
-def _extract_json(text: str) -> dict[str, object]:
-    text = text.strip()
-    if text.startswith("{"):
-        return json.loads(text)
-    match = re.search(r"\{.*\}", text, re.DOTALL)
-    if not match:
-        raise ValueError("No JSON object found in model output")
-    return json.loads(match.group(0))
-
-
-def _fallback_action(observation: LegalReviewObservation, state: LegalReviewState) -> LegalReviewAction:
-    difficulty = observation.difficulty or TaskDifficulty.EASY
-
-    if difficulty == TaskDifficulty.EASY:
-        if "contract-basics" not in state.playbook_queries:
-            return LegalReviewAction(action_type="search_playbook", topic="contract-basics")
-        if "Effective Date" not in state.extracted_clauses:
-            return LegalReviewAction(action_type="read_clause", category="Effective Date")
-        return LegalReviewAction(
-            action_type="read_clause",
-            category="Governing Law",
-            metadata={"finish": True},
+        request = urllib.request.Request(
+            f"{self._base_url}/grader",
+            data=json.dumps({"include_details": True}).encode("utf-8"),
+            headers={"Content-Type": "application/json"},
+            method="POST",
         )
-
-    if difficulty == TaskDifficulty.MEDIUM:
-        if "non-compete" not in state.playbook_queries:
-            return LegalReviewAction(action_type="search_playbook", topic="non-compete")
-        if "Non-Compete" not in state.extracted_clauses:
-            return LegalReviewAction(action_type="read_clause", category="Non-Compete")
-
-        flagged = {risk.text_span for risk in state.flagged_risks}
-        remaining = [span for span in state.extracted_clauses.get("Non-Compete", []) if span not in flagged]
-        if remaining:
-            return LegalReviewAction(
-                action_type="flag_risk",
-                text_span=remaining[0],
-                rationale="The non-compete is missing an explicit end date or exceeds the 12 month playbook limit.",
-                metadata={"finish": len(remaining) == 1},
-            )
-
-        return LegalReviewAction(action_type="search_playbook", topic="non-compete", metadata={"finish": True})
-
-    if "non-compete" not in state.playbook_queries:
-        return LegalReviewAction(action_type="search_playbook", topic="non-compete")
-    if "Non-Compete" not in state.extracted_clauses:
-        return LegalReviewAction(action_type="read_clause", category="Non-Compete")
-
-    block = state.extracted_clauses.get("Non-Compete", [""])[0]
-    target = rewrite_non_compete_block(block)
-    return LegalReviewAction(
-        action_type="apply_redline",
-        original_text=block,
-        replacement_text=target,
-        metadata={"finish": True},
-    )
-
-
-def _prompt_for_observation(observation: LegalReviewObservation, state: LegalReviewState) -> str:
-    payload = {
-        "contract_id": observation.contract_id,
-        "difficulty": observation.difficulty.value if observation.difficulty else None,
-        "task": observation.task.model_dump() if observation.task else None,
-        "message": observation.message,
-        "clause_category": observation.clause_category,
-        "clause_matches": observation.clause_matches,
-        "validation_errors": observation.validation_errors,
-        "flagged_risks": [item.model_dump() for item in observation.flagged_risks],
-        "redlines": [item.model_dump() for item in observation.redlines],
-        "score_preview": observation.score_preview,
-        "state": state.model_dump(),
-        "action_schema": LegalReviewAction.model_json_schema(),
-    }
-    return json.dumps(payload, indent=2)
-
-
-def _choose_action(
-    client: OpenAI,
-    request: BaselineRequest,
-    observation: LegalReviewObservation,
-    state: LegalReviewState,
-) -> LegalReviewAction:
-    response = client.responses.create(
-        model=request.model,
-        input=[
-            {"role": "system", "content": SYSTEM_PROMPT},
-            {"role": "user", "content": _prompt_for_observation(observation, state)},
-        ],
-        temperature=0,
-    )
-    try:
-        payload = _extract_json(response.output_text)
-        return LegalReviewAction.model_validate(payload)
-    except Exception:
-        return _fallback_action(observation, state)
+        with urllib.request.urlopen(request, timeout=60) as response:
+            payload = json.loads(response.read().decode("utf-8"))
+        return GraderResponse.model_validate(payload)
 
 
 def _run_with_adapter(adapter: _RunnerAdapter, request: BaselineRequest) -> BaselineResponse:
-    api_key = request.api_key or os.getenv("OPENAI_API_KEY")
-    if not api_key:
-        raise RuntimeError("OPENAI_API_KEY is required for the baseline runner")
-
-    client = OpenAI(api_key=api_key)
+    api_key = request.api_key or os.getenv("HF_TOKEN") or os.getenv("OPENAI_API_KEY") or os.getenv("API_KEY")
+    client = build_client(api_key=api_key)
     result = adapter.reset(
         difficulty=request.difficulty.value,
         seed=request.seed,
@@ -218,7 +112,7 @@ def _run_with_adapter(adapter: _RunnerAdapter, request: BaselineRequest) -> Base
 
     while not result.done and len(trace) < request.max_steps:
         state = adapter.state()
-        action = _choose_action(client, request, result.observation, state)
+        action = choose_action(client, request.model, result.observation, state)
         result = adapter.step(action)
         trace.append(
             BaselineTraceStep(
@@ -257,7 +151,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Run the OpenAI baseline agent against legal_review_env.")
     parser.add_argument("--base-url", default="http://127.0.0.1:8000")
     parser.add_argument("--difficulty", choices=["easy", "medium", "hard"], default="easy")
-    parser.add_argument("--model", default="gpt-4o-mini")
+    parser.add_argument("--model", default=os.getenv("MODEL_NAME", "Qwen/Qwen2.5-72B-Instruct"))
     parser.add_argument("--max-steps", type=int, default=8)
     parser.add_argument("--seed", type=int, default=None)
     parser.add_argument("--contract-id", default=None)

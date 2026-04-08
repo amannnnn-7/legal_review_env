@@ -1,4 +1,4 @@
-FROM openenv-base:latest
+FROM ghcr.io/meta-pytorch/openenv-base:latest
 
 ENV PYTHONDONTWRITEBYTECODE=1
 ENV PYTHONUNBUFFERED=1
@@ -6,8 +6,11 @@ ENV PYTHONUNBUFFERED=1
 WORKDIR /app/env
 
 COPY pyproject.toml README.md openenv.yaml Dockerfile ./
+COPY server ./server
 COPY docs ./docs
 COPY src ./src
+COPY inference.py ./inference.py
+COPY scripts ./scripts
 
 RUN python -m pip install --no-cache-dir --upgrade pip uv \
     && uv pip install --system .
