@@ -121,7 +121,8 @@ def _repository() -> StubRepository:
 
 def test_easy_task_scores_exact_matches() -> None:
     env = LegalReviewEnvironment(repository=_repository())
-    env.reset(difficulty="easy")
+    initial_observation = env.reset(difficulty="easy")
+    assert 0.0 < initial_observation.score_preview < 1.0
     env.step(LegalReviewAction(action_type="read_clause", category="Effective Date"))
     final_observation = env.step(
         LegalReviewAction(
@@ -131,12 +132,14 @@ def test_easy_task_scores_exact_matches() -> None:
         )
     )
     assert final_observation.done is True
-    assert final_observation.score_preview == 1.0
+    assert 0.99 < final_observation.score_preview < 1.0
+    assert env.grade().complete is True
 
 
 def test_medium_task_flags_exact_violation() -> None:
     env = LegalReviewEnvironment(repository=_repository())
-    env.reset(difficulty="medium")
+    initial_observation = env.reset(difficulty="medium")
+    assert 0.0 < initial_observation.score_preview < 1.0
     env.step(LegalReviewAction(action_type="search_playbook", topic="non-compete"))
     env.step(LegalReviewAction(action_type="read_clause", category="Non-Compete"))
     final_observation = env.step(
@@ -149,12 +152,14 @@ def test_medium_task_flags_exact_violation() -> None:
     )
     assert final_observation.done is True
     assert 0.0 <= final_observation.reward <= 1.0
-    assert final_observation.score_preview == 1.0
+    assert 0.99 < final_observation.score_preview < 1.0
+    assert env.grade().complete is True
 
 
 def test_hard_task_redline_updates_document() -> None:
     env = LegalReviewEnvironment(repository=_repository())
-    env.reset(difficulty="hard")
+    initial_observation = env.reset(difficulty="hard")
+    assert 0.0 < initial_observation.score_preview < 1.0
     read_observation = env.step(LegalReviewAction(action_type="read_clause", category="Non-Compete"))
     clause_block = read_observation.clause_matches[0]
     target_block = rewrite_non_compete_block(clause_block)
@@ -170,4 +175,4 @@ def test_hard_task_redline_updates_document() -> None:
     assert "12 months" in env.state.document_text
     assert env.state.document_version == 2
     assert 0.0 <= final_observation.reward <= 1.0
-    assert final_observation.score_preview > 0.9
+    assert 0.9 < final_observation.score_preview < 1.0

@@ -115,11 +115,11 @@ Reference scores from the submission `inference.py` with fixed seed `7` and dete
 
 | Task | Reference Score |
 |------|-----------------|
-| Easy | 1.000 |
-| Medium | 1.000 |
-| Hard | 0.992 |
+| Easy | 0.999 |
+| Medium | 0.999 |
+| Hard | 0.991 |
 
-These are deterministic for the built-in fallback path. When a real model endpoint is available through `API_BASE_URL` and `HF_TOKEN`, the script still uses the OpenAI client for action selection, with the same validation guardrails.
+These are deterministic for the built-in fallback path. Perfect raw grader outcomes are normalized into the open interval `(0, 1)` for validator compatibility, so perfect task completion reports `0.999` rather than `1.000`. When a real model endpoint is available through `API_BASE_URL` and `HF_TOKEN`, the script still uses the OpenAI client for action selection, with the same validation guardrails.
 
 ## Quick Start
 

@@ -9,6 +9,9 @@ from rapidfuzz.distance import Levenshtein
 from .models import GradeReport, TaskDifficulty
 
 
+_SCORE_EPSILON = 0.001
+
+
 _WORD_NUMBERS = {
     "one": 1,
     "two": 2,
@@ -130,6 +133,11 @@ def _greedy_match(predicted: Iterable[str], expected: Iterable[str]) -> tuple[in
     return true_positives, false_positives, false_negatives
 
 
+def _open_interval_score(raw_score: float) -> float:
+    bounded = min(max(raw_score, 0.0), 1.0)
+    return round(_SCORE_EPSILON + ((1.0 - (2.0 * _SCORE_EPSILON)) * bounded), 4)
+
+
 def grade_easy(
     extracted: dict[str, list[str]],
     expected: dict[str, tuple[str, ...]],
@@ -139,13 +147,15 @@ def grade_easy(
         actual_values = tuple(extracted.get(category, []))
         category_scores[category] = 1.0 if tuple(actual_values) == expected_values else 0.0
 
-    score = sum(category_scores.values()) / max(len(category_scores), 1)
+    raw_score = sum(category_scores.values()) / max(len(category_scores), 1)
+    score = _open_interval_score(raw_score)
     return GradeReport(
         difficulty=TaskDifficulty.EASY,
         metric="exact_match_average",
-        score=round(score, 4),
-        complete=score >= 1.0,
+        score=score,
+        complete=raw_score >= 1.0,
         details={
+            "raw_score": round(raw_score, 4),
             "categories": category_scores,
             "expected": expected,
             "actual": extracted,
@@ -158,16 +168,18 @@ def grade_medium(flagged: Iterable[str], expected: Iterable[str]) -> GradeReport
     precision = true_positives / max(true_positives + false_positives, 1)
     recall = true_positives / max(true_positives + false_negatives, 1)
     if precision + recall == 0.0:
-        f1 = 0.0
+        raw_score = 0.0
     else:
-        f1 = 2 * precision * recall / (precision + recall)
+        raw_score = 2 * precision * recall / (precision + recall)
+    score = _open_interval_score(raw_score)
 
     return GradeReport(
         difficulty=TaskDifficulty.MEDIUM,
         metric="span_f1",
-        score=round(f1, 4),
-        complete=f1 >= 1.0,
+        score=score,
+        complete=raw_score >= 1.0,
         details={
+            "raw_score": round(raw_score, 4),
             "precision": round(precision, 4),
             "recall": round(recall, 4),
             "true_positives": true_positives,
@@ -181,7 +193,7 @@ def grade_medium(flagged: Iterable[str], expected: Iterable[str]) -> GradeReport
 
 def grade_hard(current_block: str, original_block: str, target_block: str) -> GradeReport:
     if normalize_text(current_block) == normalize_text(original_block):
-        score = 0.0
+        raw_score = 0.0
         similarity = 0.0
         edit_penalty = 0.0
     else:
@@ -193,14 +205,17 @@ def grade_hard(current_block: str, original_block: str, target_block: str) -> Gr
         edit_penalty = Levenshtein.distance(normalized_original, normalized_current) / max(
             len(normalized_original), 1
         )
-        score = max(0.0, min(1.0, similarity - (0.35 * edit_penalty)))
+        raw_score = max(0.0, min(1.0, similarity - (0.35 * edit_penalty)))
+
+    score = _open_interval_score(raw_score)
 
     return GradeReport(
         difficulty=TaskDifficulty.HARD,
         metric="similarity_minus_edit_penalty",
-        score=round(score, 4),
-        complete=score >= 0.999,
+        score=score,
+        complete=raw_score >= 0.999,
         details={
+            "raw_score": round(raw_score, 4),
             "similarity_to_target": round(similarity, 4),
             "edit_penalty": round(edit_penalty, 4),
             "original": original_block,
