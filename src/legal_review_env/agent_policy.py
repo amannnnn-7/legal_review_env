@@ -19,7 +19,7 @@ When the task is complete, set metadata.finish to true on your final action.
 
 
 def build_client(api_base_url: str | None = None, api_key: str | None = None) -> OpenAI:
-    resolved_key = api_key or os.getenv("HF_TOKEN") or os.getenv("OPENAI_API_KEY") or os.getenv("API_KEY")
+    resolved_key = api_key or os.getenv("HF_TOKEN") or os.getenv("OPENAI_API_KEY") or os.getenv("API_KEY") or "not-set"
     resolved_base_url = api_base_url or os.getenv("API_BASE_URL") or "https://router.huggingface.co/v1"
     return OpenAI(base_url=resolved_base_url, api_key=resolved_key)
 

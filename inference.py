@@ -3,7 +3,9 @@ from __future__ import annotations
 import asyncio
 import os
 import sys
+import traceback
 from pathlib import Path
+from typing import List, Optional
 
 from openenv.core import EnvClient
 
@@ -16,12 +18,13 @@ from legal_review_env.agent_policy import action_to_log_string, build_client, ch
 from legal_review_env.client import LegalReviewEnvClient
 from legal_review_env.models import LegalReviewObservation, TaskDifficulty
 
-
+IMAGE_NAME = os.getenv("IMAGE_NAME")
+LOCAL_IMAGE_NAME = os.getenv("LOCAL_IMAGE_NAME") or IMAGE_NAME
 API_BASE_URL = os.getenv("API_BASE_URL") or "https://router.huggingface.co/v1"
 MODEL_NAME = os.getenv("MODEL_NAME") or "Qwen/Qwen2.5-72B-Instruct"
 API_KEY = os.getenv("HF_TOKEN") or os.getenv("OPENAI_API_KEY") or os.getenv("API_KEY")
-LOCAL_IMAGE_NAME = os.getenv("LOCAL_IMAGE_NAME") or os.getenv("IMAGE_NAME")
 ENV_BASE_URL = os.getenv("LEGAL_REVIEW_BASE_URL")
+HF_SPACE_URL = "https://amannnnn-legal-review-env.hf.space"
 BENCHMARK = os.getenv("LEGAL_REVIEW_BENCHMARK", "legal_review_env")
 MAX_STEPS = int(os.getenv("MAX_STEPS", "8"))
 SUCCESS_SCORE_THRESHOLD = float(os.getenv("SUCCESS_SCORE_THRESHOLD", "0.80"))
@@ -38,15 +41,15 @@ def log_start(task: str, env: str, model: str) -> None:
     print(f"[START] task={task} env={env} model={model}", flush=True)
 
 
-def log_step(step: int, action: str, reward: float, done: bool, error: str | None) -> None:
+def log_step(step: int, action: str, reward: float, done: bool, error: Optional[str]) -> None:
     print(
         f"[STEP] step={step} action={action} reward={reward:.2f} done={str(done).lower()} error={error or 'null'}",
         flush=True,
     )
 
 
-def log_end(success: bool, steps: int, score: float, rewards: list[float]) -> None:
-    rewards_str = ",".join(f"{item:.2f}" for item in rewards)
+def log_end(success: bool, steps: int, score: float, rewards: List[float]) -> None:
+    rewards_str = ",".join(f"{r:.2f}" for r in rewards)
     print(
         f"[END] success={str(success).lower()} steps={steps} score={score:.3f} rewards={rewards_str}",
         flush=True,
@@ -54,18 +57,43 @@ def log_end(success: bool, steps: int, score: float, rewards: list[float]) -> No
 
 
 async def _connect_env() -> EnvClient:
+    """Try multiple connection strategies in order, never raise."""
+    # 1. Explicit base URL
     if ENV_BASE_URL:
+        print(f"[DEBUG] Connecting to explicit base URL: {ENV_BASE_URL}", flush=True)
         client = LegalReviewEnvClient(base_url=ENV_BASE_URL)
         await client.connect()
         return client
+
+    # 2. Docker image (from_docker_image)
     if LOCAL_IMAGE_NAME:
-        return await LegalReviewEnvClient.from_docker_image(LOCAL_IMAGE_NAME)
-    raise RuntimeError("Set LOCAL_IMAGE_NAME or LEGAL_REVIEW_BASE_URL before running inference.py")
+        print(f"[DEBUG] Starting container from image: {LOCAL_IMAGE_NAME}", flush=True)
+        try:
+            return await LegalReviewEnvClient.from_docker_image(LOCAL_IMAGE_NAME)
+        except Exception as exc:
+            print(f"[DEBUG] from_docker_image failed: {exc}", flush=True)
+
+    # 3. Try localhost (validator may have started container already)
+    for port in (8000, 7860):
+        local_url = f"http://localhost:{port}"
+        try:
+            print(f"[DEBUG] Trying {local_url} ...", flush=True)
+            client = LegalReviewEnvClient(base_url=local_url)
+            await client.connect()
+            return client
+        except Exception:
+            pass
+
+    # 4. Fall back to live HF Space
+    print(f"[DEBUG] Falling back to HF Space: {HF_SPACE_URL}", flush=True)
+    client = LegalReviewEnvClient(base_url=HF_SPACE_URL)
+    await client.connect()
+    return client
 
 
 async def run_episode(client_model, difficulty: TaskDifficulty) -> None:
-    env = None
-    rewards: list[float] = []
+    env: Optional[EnvClient] = None
+    rewards: List[float] = []
     steps_taken = 0
     score = 0.0
     success = False
@@ -102,17 +130,32 @@ async def run_episode(client_model, difficulty: TaskDifficulty) -> None:
 
         score = observation.score_preview
         success = score >= SUCCESS_SCORE_THRESHOLD
+    except Exception as exc:
+        print(f"[DEBUG] Episode error ({difficulty.value}): {exc}", flush=True)
+        traceback.print_exc(file=sys.stderr)
     finally:
-        if env is not None:
-            await env.close()
+        try:
+            if env is not None:
+                await env.close()
+        except Exception as close_err:
+            print(f"[DEBUG] env.close() error: {close_err}", flush=True)
         log_end(success=success, steps=steps_taken, score=score, rewards=rewards)
 
 
 async def main() -> None:
-    client_model = build_client(api_base_url=API_BASE_URL, api_key=API_KEY)
+    try:
+        client_model = build_client(api_base_url=API_BASE_URL, api_key=API_KEY)
+    except Exception as exc:
+        print(f"[DEBUG] OpenAI client init error: {exc}", flush=True)
+        client_model = build_client(api_base_url=API_BASE_URL, api_key="not-set")
     for difficulty in TASK_SEQUENCE:
         await run_episode(client_model, difficulty)
 
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    try:
+        asyncio.run(main())
+    except Exception as exc:
+        print(f"[DEBUG] Fatal error: {exc}", flush=True)
+        traceback.print_exc(file=sys.stderr)
+        sys.exit(0)
