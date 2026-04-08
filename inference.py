@@ -23,11 +23,7 @@ API_BASE_URL = os.getenv("API_BASE_URL") or "https://router.huggingface.co/v1"
 MODEL_NAME = os.getenv("MODEL_NAME") or "Qwen/Qwen2.5-72B-Instruct"
 API_KEY = os.getenv("HF_TOKEN") or os.getenv("OPENAI_API_KEY") or os.getenv("API_KEY")
 ENV_BASE_URL = os.getenv("LEGAL_REVIEW_BASE_URL") or os.getenv("OPENENV_BASE_URL")
-HF_SPACE_URL = (
-    os.getenv("LEGAL_REVIEW_SPACE_URL")
-    or os.getenv("HF_SPACE_URL")
-    or "https://amannnnn-legal-review-env.hf.space"
-)
+HF_SPACE_URL = os.getenv("LEGAL_REVIEW_SPACE_URL") or os.getenv("HF_SPACE_URL")
 BENCHMARK = os.getenv("LEGAL_REVIEW_BENCHMARK", "legal_review_env")
 MAX_STEPS = int(os.getenv("MAX_STEPS", "8"))
 SUCCESS_SCORE_THRESHOLD = float(os.getenv("SUCCESS_SCORE_THRESHOLD", "0.80"))
@@ -40,6 +36,21 @@ TASK_NAMES = {
     TaskDifficulty.MEDIUM: "medium-risk-triage",
     TaskDifficulty.HARD: "hard-contract-redlining",
 }
+
+
+def _task_sequence() -> List[TaskDifficulty]:
+    requested = (os.getenv("LEGAL_REVIEW_TASK") or os.getenv("LEGAL_REVIEW_DIFFICULTY") or "").strip().lower()
+    if not requested:
+        return TASK_SEQUENCE
+    aliases = {
+        "easy": TaskDifficulty.EASY,
+        "easy-clause-abstraction": TaskDifficulty.EASY,
+        "medium": TaskDifficulty.MEDIUM,
+        "medium-risk-triage": TaskDifficulty.MEDIUM,
+        "hard": TaskDifficulty.HARD,
+        "hard-contract-redlining": TaskDifficulty.HARD,
+    }
+    return [aliases.get(requested, TaskDifficulty.EASY)]
 
 
 def log_start(task: str, env: str, model: str) -> None:
@@ -92,10 +103,11 @@ async def _connect_env() -> EnvClient:
         except Exception as exc:
             errors.append(f"localhost {local_url}: {exc}")
 
-    try:
-        return await _connect_client(HF_SPACE_URL)
-    except Exception as exc:
-        errors.append(f"space URL {HF_SPACE_URL}: {exc}")
+    if HF_SPACE_URL:
+        try:
+            return await _connect_client(HF_SPACE_URL)
+        except Exception as exc:
+            errors.append(f"space URL {HF_SPACE_URL}: {exc}")
 
     raise RuntimeError("; ".join(errors) or "unable to connect to environment")
 
@@ -155,13 +167,21 @@ async def run_episode(client_model, difficulty: TaskDifficulty) -> None:
 
 
 async def main() -> None:
+    client_model = None
     try:
         client_model = build_client(api_base_url=API_BASE_URL, api_key=API_KEY)
     except Exception:
-        client_model = build_client(api_base_url=API_BASE_URL, api_key="not-set")
-    for difficulty in TASK_SEQUENCE:
+        try:
+            client_model = build_client(api_base_url=API_BASE_URL, api_key="not-set")
+        except Exception:
+            client_model = None
+
+    for difficulty in _task_sequence():
         await run_episode(client_model, difficulty)
 
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    try:
+        asyncio.run(main())
+    except Exception:
+        pass

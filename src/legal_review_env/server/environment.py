@@ -35,6 +35,10 @@ class LegalReviewEnvironment(
         self._previous_validation_error = False
         self._state = LegalReviewState(episode_id=str(uuid4()), status="idle")
 
+    @staticmethod
+    def _normalize_reward(value: float) -> float:
+        return round(min(max(value, 0.0), 1.0), 4)
+
     def reset(
         self,
         seed: int | None = None,
@@ -246,11 +250,12 @@ class LegalReviewEnvironment(
                 self._state.status = "done"
             self._state.complete = done
             self._previous_validation_error = bool(validation_errors)
+            normalized_reward = self._normalize_reward(reward)
 
             return self._observation(
                 status=status,
                 message=message,
-                reward=round(reward, 4),
+                reward=normalized_reward,
                 done=done,
                 playbook=playbook,
                 clause_category=clause_category,

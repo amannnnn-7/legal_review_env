@@ -148,6 +148,7 @@ def test_medium_task_flags_exact_violation() -> None:
         )
     )
     assert final_observation.done is True
+    assert 0.0 <= final_observation.reward <= 1.0
     assert final_observation.score_preview == 1.0
 
 
@@ -168,4 +169,5 @@ def test_hard_task_redline_updates_document() -> None:
     assert final_observation.done is True
     assert "12 months" in env.state.document_text
     assert env.state.document_version == 2
+    assert 0.0 <= final_observation.reward <= 1.0
     assert final_observation.score_preview > 0.9

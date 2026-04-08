@@ -104,8 +104,8 @@ Rewards are dense rather than terminal-only.
 - `+0.20` for correctly flagging a violating span
 - positive shaping equal to score improvement after each action
 - `+0.10` for recovering immediately after a validation error
-- `-0.10` for invalid topics/categories
-- `-0.20` for hallucinated risk flags or redlines
+- invalid topics/categories and hallucinated actions reduce the step reward to the bottom of the bounded range
+- every emitted step reward is clamped into `[0.0, 1.0]` for validator compatibility
 
 This gives useful training signal across the trajectory while penalizing loops and unsafe actions.
 
