@@ -4,6 +4,7 @@ import argparse
 import hashlib
 import json
 import math
+import os
 from collections import defaultdict
 from dataclasses import dataclass, field
 from functools import cached_property, lru_cache
@@ -57,12 +58,28 @@ class LegalReviewRepository:
         self.filename = filename
 
     def prefetch(self) -> Path:
+        for candidate in self._local_candidates():
+            if candidate.exists():
+                return candidate
+
         path = hf_hub_download(
             repo_id=self.repo_id,
             repo_type="dataset",
             filename=self.filename,
         )
         return Path(path)
+
+    def _local_candidates(self) -> tuple[Path, ...]:
+        candidates: list[Path] = []
+
+        configured_path = os.getenv("LEGAL_REVIEW_DATA_PATH")
+        if configured_path:
+            candidates.append(Path(configured_path).expanduser())
+
+        repo_root = Path(__file__).resolve().parents[2]
+        candidates.append(repo_root / "data" / "CUAD_v1.json")
+
+        return tuple(candidates)
 
     @cached_property
     def contracts(self) -> tuple[ContractRecord, ...]:

@@ -1,22 +1,20 @@
 ---
 title: legal_review_env
-emoji: scales
+emoji: ⚖️
 colorFrom: blue
 colorTo: green
 sdk: docker
 app_port: 8000
-short_description: Stateful legal contract review, risk abstraction, and redlining environment built on CUAD.
+short_description: Stateful legal contract review and redlining on CUAD.
 tags:
-	- openenv
-	- legal
-	- contracts
-	- reinforcement-learning
+  - openenv
+  - legal
+  - contracts
+  - reinforcement-learning
 datasets:
-	- TheAtticusProject/cuad
+  - TheAtticusProject/cuad
 suggested_hardware: cpu-basic
 startup_duration_timeout: 30m
-preload_from_hub:
-	- TheAtticusProject/cuad CUAD_v1/CUAD_v1.json
 ---
 
 ## legal_review_env
@@ -35,6 +33,8 @@ It is designed around a "junior lawyer simulator" workflow:
 ## Dataset Notes
 
 The published Hugging Face dataset `TheAtticusProject/cuad` currently exposes the raw CUAD asset bundle rather than a ready-made `test` split table. This project uses the canonical annotation file bundled in that dataset repo at `CUAD_v1/CUAD_v1.json`.
+
+For reliable deployment, the environment prefers a vendored local copy at `data/CUAD_v1.json` and falls back to Hugging Face only when that file is absent.
 
 To preserve deterministic evaluation semantics:
 

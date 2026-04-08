@@ -9,6 +9,7 @@ COPY pyproject.toml README.md openenv.yaml Dockerfile ./
 COPY server ./server
 COPY docs ./docs
 COPY src ./src
+COPY data ./data
 COPY inference.py ./inference.py
 COPY scripts ./scripts
 
