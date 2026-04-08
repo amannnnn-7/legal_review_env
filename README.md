@@ -115,11 +115,11 @@ Reference scores from the submission `inference.py` with fixed seed `7` and dete
 
 | Task | Reference Score |
 |------|-----------------|
-| Easy | 0.999 |
-| Medium | 0.999 |
-| Hard | 0.991 |
+| Easy | 0.484 |
+| Medium | 0.433 |
+| Hard | 0.433 |
 
-These are deterministic for the built-in fallback path. Perfect raw grader outcomes are normalized into the open interval `(0, 1)` for validator compatibility, so perfect task completion reports `0.999` rather than `1.000`. When a real model endpoint is available through `API_BASE_URL` and `HF_TOKEN`, the script still uses the OpenAI client for action selection, with the same validation guardrails.
+These are deterministic for the built-in fallback path. The submission script reports episode `score` as the average of emitted step rewards, normalized into the open interval `(0, 1)` for validator compatibility, so it never logs `0.000` or `1.000` in the `[END]` line. The environment grader still exposes task-quality `score_preview` values separately through the API. When a real model endpoint is available through `API_BASE_URL` and `HF_TOKEN`, the script still uses the OpenAI client for action selection, with the same validation guardrails.
 
 ## Quick Start
 

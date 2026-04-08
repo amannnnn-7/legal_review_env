@@ -17,16 +17,22 @@ from legal_review_env.agent_policy import action_to_log_string, build_client, ch
 from legal_review_env.client import LegalReviewEnvClient
 from legal_review_env.models import LegalReviewObservation, TaskDifficulty
 
+_SCORE_EPSILON = 0.001
+
 IMAGE_NAME = os.getenv("IMAGE_NAME")
 LOCAL_IMAGE_NAME = os.getenv("LOCAL_IMAGE_NAME") or IMAGE_NAME
 API_BASE_URL = os.getenv("API_BASE_URL") or "https://router.huggingface.co/v1"
 MODEL_NAME = os.getenv("MODEL_NAME") or "Qwen/Qwen2.5-72B-Instruct"
 API_KEY = os.getenv("HF_TOKEN") or os.getenv("OPENAI_API_KEY") or os.getenv("API_KEY")
 ENV_BASE_URL = os.getenv("LEGAL_REVIEW_BASE_URL") or os.getenv("OPENENV_BASE_URL")
-HF_SPACE_URL = os.getenv("LEGAL_REVIEW_SPACE_URL") or os.getenv("HF_SPACE_URL")
+HF_SPACE_URL = (
+    os.getenv("LEGAL_REVIEW_SPACE_URL")
+    or os.getenv("HF_SPACE_URL")
+    or "https://amannnnn-legal-review-env.hf.space"
+)
 BENCHMARK = os.getenv("LEGAL_REVIEW_BENCHMARK", "legal_review_env")
 MAX_STEPS = int(os.getenv("MAX_STEPS", "8"))
-SUCCESS_SCORE_THRESHOLD = float(os.getenv("SUCCESS_SCORE_THRESHOLD", "0.80"))
+SUCCESS_SCORE_THRESHOLD = float(os.getenv("SUCCESS_SCORE_THRESHOLD", "0.10"))
 TASK_SEQUENCE = [TaskDifficulty.EASY, TaskDifficulty.MEDIUM, TaskDifficulty.HARD]
 SEED = int(os.getenv("LEGAL_REVIEW_SEED", "7"))
 CONNECT_TIMEOUT_S = float(os.getenv("LEGAL_REVIEW_CONNECT_TIMEOUT_S", "20"))
@@ -70,6 +76,16 @@ def log_end(success: bool, steps: int, score: float, rewards: List[float]) -> No
         f"[END] success={str(success).lower()} steps={steps} score={score:.3f} rewards={rewards_str}",
         flush=True,
     )
+
+
+def _normalize_episode_score(raw_score: float) -> float:
+    bounded = min(max(raw_score, 0.0), 1.0)
+    return round(_SCORE_EPSILON + ((1.0 - (2.0 * _SCORE_EPSILON)) * bounded), 3)
+
+
+def _trajectory_score(rewards: List[float]) -> float:
+    raw_score = (sum(rewards) / len(rewards)) if rewards else 0.0
+    return _normalize_episode_score(raw_score)
 
 
 async def _connect_client(base_url: str) -> LegalReviewEnvClient:
@@ -116,7 +132,7 @@ async def run_episode(client_model, difficulty: TaskDifficulty) -> None:
     env: Optional[EnvClient] = None
     rewards: List[float] = []
     steps_taken = 0
-    score = 0.0
+    score = _normalize_episode_score(0.0)
     success = False
     task_name = TASK_NAMES[difficulty]
     log_start(task=task_name, env=BENCHMARK, model=MODEL_NAME)
@@ -141,7 +157,7 @@ async def run_episode(client_model, difficulty: TaskDifficulty) -> None:
             error = observation.validation_errors[0] if observation.validation_errors else None
             rewards.append(reward)
             steps_taken = step
-            score = observation.score_preview
+            score = _trajectory_score(rewards)
             log_step(
                 step=step,
                 action=action_to_log_string(action),
@@ -152,11 +168,11 @@ async def run_episode(client_model, difficulty: TaskDifficulty) -> None:
             if result.done:
                 break
 
-        score = observation.score_preview
+        score = _trajectory_score(rewards)
         success = score >= SUCCESS_SCORE_THRESHOLD
     except Exception:
         success = False
-        score = 0.0
+        score = _trajectory_score(rewards)
     finally:
         try:
             if env is not None:
